@@ -1,0 +1,205 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NOVA AI — Multi-AI Assistant</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 20px;
+  background: #0b1020; color: #f3f4f6;
+  font-family: system-ui, sans-serif;
+}
+main { max-width: 760px; margin: auto; }
+h1 { color: #a5b4fc; }
+p { color: #cbd5e1; line-height: 1.6; }
+input, textarea, button {
+  width: 100%; padding: 13px; margin: 7px 0;
+  border-radius: 10px; font: inherit;
+}
+input, textarea {
+  background: #151d32; color: white;
+  border: 1px solid #39445e;
+}
+textarea { min-height: 110px; resize: vertical; }
+button {
+  background: #6366f1; color: white;
+  border: 0; font-weight: bold;
+}
+button:disabled { opacity: .5; }
+.card {
+  background: #151d32; padding: 16px;
+  border-radius: 14px; margin: 14px 0;
+  border: 1px solid #293650;
+}
+.answer { white-space: pre-wrap; overflow-wrap: anywhere; }
+.small { font-size: 13px; color: #94a3b8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>✦ NOVA AI</h1>
+  <p>Your task. Multiple AI models. One clear answer.</p>
+
+  <section class="card">
+    <label for="key">OpenRouter API key</label>
+    <input id="key" type="password"
+      autocomplete="off" placeholder="Paste your API key">
+    <p class="small">
+      This demo doesn't save the key. Requests still send it
+      through your browser. Use only for private testing;
+      don't share or publish this app with the key exposed.
+    </p>
+
+    <label for="task">What should NOVA do?</label>
+    <textarea id="task"
+      placeholder="Example: Create realistic dinosaur AI for my game."></textarea>
+
+    <button id="run" onclick="runNOVA()">
+      Ask Multiple AIs
+    </button>
+    <p id="status" role="status">Ready.</p>
+  </section>
+
+  <section class="card">
+    <h3>🧠 AI Model 1</h3>
+    <div id="answer1" class="answer">Waiting for task...</div>
+  </section>
+
+  <section class="card">
+    <h3>🤖 AI Model 2</h3>
+    <div id="answer2" class="answer">Waiting for task...</div>
+  </section>
+
+  <section class="card">
+    <h2>✨ NOVA's Final Answer</h2>
+    <div id="final" class="answer">Your combined answer appears here.</div>
+    <button onclick="copyAnswer()">Copy Final Answer</button>
+  </section>
+</main>
+
+<script>
+const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+
+// Free models can change. Replace these IDs with currently
+// available free model IDs from the OpenRouter Models page.
+const MODELS = [
+  "google/gemma-4-26b-a4b-it:free",
+  "google/gemma-4-31b-it:free"
+];
+
+async function askAI(key, model, messages) {
+  const response = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + key,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.4,
+      max_tokens: 1400
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error?.message || "API request failed");
+  }
+
+  const answer = data.choices?.[0]?.message?.content;
+  if (!answer) throw new Error("The model returned no text.");
+  return answer;
+}
+
+async function runNOVA() {
+  const key = document.getElementById("key").value.trim();
+  const task = document.getElementById("task").value.trim();
+  const button = document.getElementById("run");
+
+  if (!key || !task) {
+    alert("Enter your API key and task first.");
+    return;
+  }
+
+  button.disabled = true;
+  document.getElementById("status").textContent =
+    "Asking both AI models...";
+
+  const a1 = document.getElementById("answer1");
+  const a2 = document.getElementById("answer2");
+  const final = document.getElementById("final");
+
+  a1.textContent = "Working...";
+  a2.textContent = "Working...";
+  final.textContent = "Waiting for model responses...";
+
+  try {
+    // Ask both models in parallel.
+    const results = await Promise.allSettled([
+      askAI(key, MODELS[0], [{ role: "user", content: task }]),
+      askAI(key, MODELS[1], [{ role: "user", content: task }])
+    ]);
+
+    const answers = results.map((r, i) => {
+      if (r.status === "fulfilled") {
+        (i === 0 ? a1 : a2).textContent = r.value;
+        return `MODEL ${i + 1}:\n${r.value}`;
+      }
+      const message = r.reason?.message || "Request failed";
+      (i === 0 ? a1 : a2).textContent = "Error: " + message;
+      return "";
+    }).filter(Boolean);
+
+    if (!answers.length) {
+      throw new Error("Both models failed. Check your key, limits, and model IDs.");
+    }
+
+    document.getElementById("status").textContent =
+      "Combining the available answers...";
+
+    // Use the first model as the synthesizer.
+    // If only one model worked, it still gets a final-answer task.
+    const combined = await askAI(key, MODELS[0], [{
+      role: "user",
+      content:
+        "You are NOVA, a careful answer editor. Respond to the original task.\n\n" +
+        "ORIGINAL TASK:\n" + task +
+        "\n\nRESPONSES FROM AVAILABLE MODELS:\n" +
+        answers.join("\n\n---\n\n") +
+        "\n\nWrite one clear, organized answer. Keep useful details, " +
+        "identify disagreements, and do not claim a fact is verified " +
+        "just because models agree. If something is uncertain, say so."
+    }]);
+
+    final.textContent = combined;
+    document.getElementById("status").textContent =
+      "Finished. " + answers.length + " model response(s) received.";
+
+  } catch (error) {
+    document.getElementById("status").textContent =
+      "Problem: " + error.message;
+    final.textContent =
+      "Try again after checking the API key, internet connection, " +
+      "model availability, and free usage limits.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function copyAnswer() {
+  const text = document.getElementById("final").textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    alert("Answer copied!");
+  } catch {
+    alert("Copy isn't available in this browser context. Select the answer and copy it manually.");
+  }
+}
+</script>
+</body>
+</html>
